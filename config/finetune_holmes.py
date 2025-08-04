@@ -1,14 +1,14 @@
 import time
 
-out_dir = 'out-shakespeare'
+out_dir = 'out-holmes'
 eval_interval = 5
 eval_iters = 40
 wandb_log = False # feel free to turn on
-wandb_project = 'shakespeare'
+wandb_project = 'holmes'
 wandb_run_name = 'ft-' + str(time.time())
 
-dataset = 'shakespeare'
-init_from = 'gpt2' # 'gpt2-xl' # this is the largest GPT-2 model
+dataset = 'holmes'
+init_from = 'gpt2-xl' # this is the largest GPT-2 model
 
 # only save checkpoints if the validation loss improves
 always_save_checkpoint = False

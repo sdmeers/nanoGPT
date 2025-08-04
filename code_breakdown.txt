@@ -1,0 +1,295 @@
+  train.py: The Training Script
+
+  This script is responsible for teaching the GPT model. Think of it as the "teacher" and the "classroom"
+  combined. Its main job is to repeatedly show the model text, ask it to predict the next word, and then
+  adjust the model's internal parameters to help it make better predictions next time.
+
+  Here are the major sections:
+
+   1. Configuration (Lines 28-75):
+       * What it is: This is the "control panel" for the entire training process. It's a long list of
+         variables that you can tweak to control every aspect of training.
+       * What it does: It sets crucial parameters like the learning rate (how fast the model learns), the
+         batch size (how much text the model reads at once), the size of the model itself (n_layer, n_head,
+         n_embd), and where to save the results (out_dir). It also reads any custom settings from the command
+         line or a config file.
+       * Intuition: Imagine setting the dials on an oven before baking. You decide the temperature, cooking
+         time, and ingredients here.
+
+   2. Initialization & DDP Setup (Lines 78-111):
+       * What it is: This section prepares the training environment.
+       * What it does: It checks if you're training on a single GPU or multiple GPUs (Distributed Data
+         Parallel or DDP). It sets up communication between the GPUs if needed, initializes random seeds for
+         reproducibility, and configures the hardware (cuda, cpu) for optimal performance.
+       * Intuition: This is like setting up the classroom. Are we using one desk or a whole room of desks?
+         Let's make sure every student (process) has a unique ID and can talk to the others.
+
+   3. Data Loading (`get_batch` function, Lines 114-131):
+       * What it is: A simple but effective function to grab chunks of data for the model to train on.
+       * What it does: For each training step, this function randomly grabs a set of small text sequences
+         (block_size) from the large dataset file (train.bin or val.bin). It uses a technique called memory
+         mapping (np.memmap) to do this very efficiently without loading the entire (potentially huge) dataset
+          into memory. It prepares an input x (the text to read) and a target y (the text to predict).
+       * Intuition: This is the "librarian." It quickly fetches a few random paragraphs from the library for
+         the model to study in each session.
+
+   4. Model Initialization (Lines 134-191):
+       * What it is: This section creates the GPT model itself.
+       * What it does: It decides how to create the model based on the init_from setting.
+           * 'scratch': Builds a brand new, untrained model from the ground up.
+           * 'resume': Loads a previously saved model from a checkpoint, allowing you to continue training
+             where you left off.
+           * 'gpt2*': Downloads the official GPT-2 weights from OpenAI, giving you a powerful, pre-trained
+             model as a starting point.
+       * Intuition: We're choosing our student. Is it a complete beginner (scratch), a student returning from
+         a break (resume), or a highly-skilled transfer student (gpt2)?
+
+   5. Optimizer and Training Loop Setup (Lines 194-211):
+       * What it is: This section prepares the tools for the learning process.
+       * What it does: It initializes the optimizer (AdamW), which is the algorithm that actually updates the
+         model's parameters. It also sets up a GradScaler for more stable training with certain data types and
+          compiles the model with torch.compile to make it run much faster.
+       * Intuition: We're giving the "teacher" (the optimizer) its red pen and lesson plan. Compiling the
+         model is like giving the student a calculator to solve problems faster.
+
+   6. The Training Loop (`while True`, Lines 229-298):
+       * What it is: This is the heart of the script where the actual learning happens, running over and over.
+       * What it does: In each iteration, it does the following:
+           1. Get Learning Rate: It adjusts the learning rate based on a schedule (get_lr), typically starting
+              low, warming up, and then slowly decreasing.
+           2. Evaluate: Periodically, it pauses training to check the model's performance on the validation
+              data (estimate_loss). This tells us if the model is truly learning or just memorizing.
+           3. Save Checkpoint: If the model has improved, it saves a "checkpoint" of its current state.
+           4. Forward Pass: The model (model(X, Y)) reads the input text X and calculates the loss—a measure of
+               how wrong its predictions for Y were.
+           5. Backward Pass: The script calculates the gradients (scaler.scale(loss).backward()), which tell it
+               how to adjust each of the model's millions of parameters to reduce the loss.
+           6. Optimizer Step: The optimizer (scaler.step(optimizer)) uses the gradients to update the model's
+              parameters. This is the moment the model "learns."
+       * Intuition: This is the "school day." The model studies a text (forward pass), gets graded (loss), is
+         told how to improve (backward pass), and updates its knowledge (optimizer step). The periodic
+         evaluation is like a pop quiz to check for real understanding.
+
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  sample.py: The Generation Script
+
+  This script's purpose is to take a trained GPT model and use it to generate new text. If train.py is the
+  "teacher," then sample.py is the "storyteller." It loads the model's learned knowledge and asks it to
+  create something new based on a starting prompt.
+
+  Here are the major sections:
+
+   1. Configuration (Lines 8-20):
+       * What it is: The "control panel" for the storyteller.
+       * What it does: It sets the parameters for the text generation process. Key settings include:
+           * init_from: Which trained model to use (either one you trained yourself with train.py or a
+             pre-trained one like gpt2).
+           * start: The initial text prompt to kick off the generation.
+           * num_samples: How many different completions to generate.
+           * max_new_tokens: The length of the generated text.
+           * temperature and top_k: These are crucial "creativity" knobs. temperature controls the randomness
+             of the model's word choices (lower is more predictable, higher is more creative). top_k limits
+             the model's choices to the k most likely next words, preventing it from picking very strange
+             options.
+       * Intuition: You're giving instructions to the storyteller. You tell it which storybook to read from
+         (init_from), the first sentence of the story (start), and whether you want a safe, predictable tale
+         (low temperature) or a wild, imaginative one (high temperature).
+
+   2. Model Loading (Lines 33-51):
+       * What it is: This section wakes up the trained model and gets it ready.
+       * What it does: It finds the model's files on your computer. If you're using a model you trained
+         (init_from = 'resume'), it loads the checkpoint file (ckpt.pt) that train.py saved. If you're using a
+          standard GPT-2 model, it downloads and prepares the official version. It then loads all the learned
+         parameters (the "knowledge") into the model's brain.
+       * Intuition: The storyteller is selected and opens their book, ready to read. All the knowledge they
+         gained during their "schooling" (train.py) is now available.
+
+   3. Tokenizer Loading (Lines 56-77):
+       * What it is: This section loads the model's "dictionary."
+       * What it does: A model doesn't understand letters and words directly; it understands numbers called
+         "tokens." A tokenizer is the translator between human text and these tokens. This code first looks
+         for a custom dictionary (meta.pkl) that might have been created for your specific dataset (e.g., a
+         dictionary for Shakespearean English). If it can't find one, it defaults to the standard GPT-2
+         dictionary (tiktoken). It creates two helper functions: encode (text to tokens) and decode (tokens
+         back to text).
+       * Intuition: The storyteller needs a specific dictionary to understand your prompt and to speak back to
+          you. This step finds the right one.
+
+   4. Generation Loop (Lines 79-91):
+       * What it is: This is the main event where the story is written.
+       * What it does:
+           1. It takes your start prompt and encodes it into tokens the model can understand.
+           2. It enters a loop to generate the requested num_samples of text.
+           3. Inside the loop, it calls model.generate(). This is the core function where the magic happens.
+              The model looks at the sequence of tokens so far and predicts the most likely next token. It adds
+               this new token to the sequence and feeds the now-longer sequence back into itself to predict the
+               next token, and so on, until it has generated max_new_tokens.
+           4. Finally, it takes the full sequence of generated tokens and decodes it back into human-readable
+              text, which it prints to your screen.
+       * Intuition: You give the storyteller the first line. The storyteller thinks of the next best word, says
+         it, then thinks of the next word based on the new, longer sentence, and repeats this process until the
+         story is complete. Then it tells you the whole story.
+
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  config/train_shakespeare_char.py: A Recipe for a Toy Model
+
+  Think of train.py as a powerful, general-purpose "engine" for training models. This file,
+  train_shakespeare_char.py, is not a program that runs by itself. Instead, it's a configuration file—a
+  specific "recipe" or "instruction sheet" that you give to the train.py engine.
+
+  When you run a command like python train.py config/train_shakespeare_char.py, the train.py script reads
+  this file and overrides its default settings with the ones defined here.
+
+  The main purpose of this specific recipe is to train a very small, "baby" GPT model for a simple, fun
+  task: learning to write like Shakespeare, one character at a time. It's designed to be fast, easy to run
+  (even on a laptop CPU), and perfect for debugging or understanding the fundamentals without needing a
+  powerful GPU.
+
+  Here's a breakdown of its key "instructions":
+
+   1. `dataset = 'shakespeare_char'`
+       * What it does: This is the most important instruction. It tells the training engine to ignore the
+         default large dataset (OpenWebText) and instead use the shakespeare_char dataset. This dataset is
+         just Shakespeare's writings, treated as a long sequence of individual characters (letters, spaces,
+         punctuation).
+       * Intuition: Instead of reading the entire internet, we're telling the model to study only one author's
+          work, and to focus on spelling and grammar at the character level.
+
+   2. `block_size = 256`
+       * What it does: This sets the model's "attention span" or context window. The model will look at the
+         last 256 characters to predict the next one.
+       * Intuition: This is much smaller than the default of 1024. Since we're predicting characters, not
+         whole words, a shorter context is sufficient and keeps the model small and fast.
+
+   3. `n_layer = 6`, `n_head = 6`, `n_embd = 384`
+       * What it does: These parameters define the size of the model's "brain." They are all much smaller than
+          the GPT-2 defaults.
+       * Intuition: This explicitly creates the "baby GPT." It has fewer layers of processing and a smaller
+         working memory, making it much faster to train but also less powerful than a full-sized model.
+
+   4. `dropout = 0.2`
+       * What it does: Dropout is a technique to prevent the model from simply "memorizing" the training data
+         (a problem called overfitting). It randomly ignores a fraction of the neurons during training.
+       * Intuition: This is like making the student solve problems with one hand tied behind their back. It
+         forces them to learn more robust, general patterns instead of just memorizing the answers. A higher
+         dropout is used here because a small model on a small dataset is very likely to overfit.
+
+   5. `learning_rate = 1e-3`, `max_iters = 5000`
+       * What it does: It sets a relatively high learning rate and a low number of training iterations.
+       * Intuition: We're telling the baby model to learn quickly (high learning_rate) but for a short period
+         of time (max_iters). This is perfect for a quick experiment where the goal is to see it learn
+         something, not to achieve state-of-the-art performance.
+
+In short, train_shakespeare_char.py is a configuration that swaps out the default "train a huge GPT on the
+internet" settings for a "train a tiny GPT on Shakespeare" setup.
+
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  data/shakespeare_char/prepare.py: The Character-Level Tokenizer
+
+  This script is a data preparation utility. Its main purpose is to take a raw text file of Shakespeare's
+  works and convert it into a special numerical format that a character-level language model can be trained
+  on. It essentially translates the text into a simple code that the AI can understand.
+
+  Here's a step-by-step breakdown of what it does:
+
+   1. Download the Dataset (Lines 11-16):
+       * What it is: An automatic data fetcher.
+       * What it does: It first checks if the file input.txt exists in the current directory. If not, it
+         downloads the "Tiny Shakespeare" dataset from a public URL and saves it. This makes setup easy.
+       * Intuition: The script's first job is to make sure the raw material (the book of Shakespeare's works)
+         is available locally before it starts processing it.
+
+   2. Create a Vocabulary (Lines 21-25):
+       * What it is: A character dictionary builder.
+       * What it does: The script reads the entire text and finds every single unique character used—every
+         letter (a-z, A-Z), punctuation mark (., !, ?), and symbol (like a space or newline). This collection
+         of unique characters becomes the model's "vocabulary."
+       * Intuition: The model needs to know all the possible "letters" it can learn to read and write. This
+         step creates that definitive alphabet.
+
+   3. Create an Encoder and Decoder (Lines 28-34):
+       * What it is: A two-way translator.
+       * What it does: It creates two simple mappings:
+           * stoi (string-to-integer): A dictionary where each unique character is assigned a unique number
+             (e.g., 'a': 0, 'b': 1, 'c': 2, ...).
+           * itos (integer-to-string): The reverse dictionary, mapping each number back to its character
+             (e.g., 0: 'a', 1: 'b', 2: 'c', ...).
+       * Intuition: Since computers work with numbers, not letters, this step builds the "secret codebook" for
+          translating text into numbers (encode) and numbers back into readable text (decode).
+
+   4. Split the Data (Lines 37-39):
+       * What it is: A standard data partitioning step.
+       * What it does: It divides the full text into two parts: a training set (the first 90% of the text) and
+          a validation set (the final 10%).
+       * Intuition: The model will learn from the training data. The validation data is held back and used to
+         periodically test the model to ensure it's learning general patterns, not just memorizing the text.
+
+   5. Encode and Save the Data (Lines 42-49):
+       * What it is: The main conversion and export process.
+       * What it does: It uses the encode function to convert both the training and validation text into long
+         lists of numbers (tokens). These lists are then saved as compact binary files (train.bin and
+         val.bin), which are very fast for the training script to load.
+       * Intuition: The script translates the entire book into its secret code and saves the coded message
+         into two efficient files, ready for the model to study.
+
+   6. Save the Metadata (Lines 52-58):
+       * What it is: Saving the "codebook" for later.
+       * What it does: It saves the vocabulary size and the stoi/itos mapping dictionaries into a separate
+         file called meta.pkl.
+       * Intuition: After training, when we want to generate new text, we'll need this codebook to translate
+         our starting prompt into numbers for the model and to translate the model's numerical output back
+         into readable text. This file keeps that essential information safe.
+
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  data/shakespeare/prepare.py: The BPE Tokenizer
+
+  This script is another data preparation utility, similar to the one for the Holmes dataset, but it uses a
+  different and more advanced tokenization strategy. Its job is to download the "Tiny Shakespeare" dataset
+  and convert it into a format that a word-level GPT model (like the default one in train.py) can
+  understand.
+
+  The key difference from the holmes or shakespeare_char preparers is that this one does not work on a
+  character-by-character basis. Instead, it uses Byte-Pair Encoding (BPE), the same method used by the real
+  GPT-2.
+
+  Here's a breakdown of its process:
+
+   1. Download the Data (Lines 6-11):
+       * What it is: An automated downloader.
+       * What it does: It first checks if the Shakespeare text file (input.txt) already exists. If it doesn't,
+          the script automatically downloads it from a public URL. This is a convenient way to ensure the data
+          is available without requiring you to download it manually.
+       * Intuition: The script is a helpful assistant. Its first task is to fetch the raw material—the book of
+          Shakespeare's works—from an online library.
+
+   2. Read and Split the Data (Lines 13-17):
+       * What it is: A standard data partitioning step.
+       * What it does: It reads the entire text file into memory and then splits it into two sections: a
+         train_data set containing the first 90% of the text, and a val_data set with the last 10%.
+       * Intuition: This is like preparing for a class. The model will "study" the first 90% of the book
+         (training) and will be "tested" on the last 10% (validation) to see if it has truly learned the
+         patterns of the language, rather than just memorizing the text it saw.
+
+   3. Encode with Tiktoken (Lines 20-23):
+       * What it is: The core of the script and the key difference. This is the tokenization step.
+       * What it does: It uses tiktoken, a library from OpenAI, to access the official GPT-2 tokenizer. This
+         tokenizer doesn't just map one character to one number. Instead, it uses a much larger vocabulary of
+         common sub-words (like " the", "ing", " and"). It breaks the text down into these "tokens."
+       * Intuition: Instead of translating text into a simple character-by-character code, this script uses a
+         sophisticated "language translator." It knows that "king" is a more meaningful unit than the letters
+         "k", "i", "n", "g" separately. This allows the model to learn about concepts and words directly,
+         which is much more efficient and powerful than learning about individual letters.
+
+   4. Export to Binary Files (Lines 26-29):
+       * What it is: The final saving step.
+       * What it does: It takes the lists of numerical tokens (e.g., [1, 5, 10, 24, ...]) and saves them into
+         two highly-compressed binary files: train.bin and val.bin.
+       * Intuition: The script packages the translated "code" into compact, efficient files. This is the
+         final, model-ready textbook that the train.py script will use for its lessons.
+
+ In summary, this prepare.py script is a more advanced data prepper that gets the Shakespeare dataset ready
+ for a more powerful, word-aware GPT model. Its use of BPE tokenization is the crucial difference that
+ allows the model to think in terms of words and word-parts, not just letters.
